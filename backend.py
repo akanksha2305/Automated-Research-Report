@@ -21,7 +21,7 @@ openai.api_key = GROQ_API_KEY
 openai.api_base = GROQ_API_BASE
 
 # Fallback sentence transformer
-local_model = SentenceTransformer("all-MiniLM-L6-v2")
+local_model = SentenceTransformer("bert-base-nli-mean-tokens")
 
 ### 1. Extract text from documents
 def extract_text(file_path):
@@ -54,16 +54,22 @@ def load_documents():
     return all_docs
 
 ### 3. Generate embedding (Groq/OpenAI-compatible)
+# Import OpenAI client (updated)
+from openai import OpenAI
+client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_API_BASE)
+
+# Updated get_embedding function
 def get_embedding(text):
     try:
-        response = openai.Embedding.create(
+        response = client.embeddings.create(
             input=[text],
             model=EMBEDDING_MODEL
         )
-        return response["data"][0]["embedding"]
+        return response.data[0].embedding  # Works with OpenAI >=1.0.0
     except Exception as e:
         print("Groq API failed, falling back to local model:", e)
         return local_model.encode([text])[0].tolist()
+
 
 ### 4. Build FAISS index
 def build_index():
