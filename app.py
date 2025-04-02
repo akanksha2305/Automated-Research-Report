@@ -1,205 +1,190 @@
-# Import Required Libraries
+import os
 import sqlite3
 import numpy as np
-import os
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import faiss
 import streamlit as st
-from PyPDF2 import PdfReader
-from docx import Document
 from hashlib import sha256
+from docx import Document as DocxWriter
+from fpdf import FPDF
+import logging
 
-# Load environment variables
+logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s:%(levelname)s:%(message)s')
+
+# Load env
 load_dotenv()
-gemini_api_key = os.getenv("GEMINI_API_KEY")
 admin_password = os.getenv("ADMIN_PASSWORD")
 
-# Ensure admin password is correctly loaded
 if not admin_password:
-    st.error("ADMIN_PASSWORD environment variable not set. Please check your .env file.")
+    st.error("ADMIN_PASSWORD not set in .env.")
 
-# Initialize session state variables
+# Session state
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
-if "uploaded_files" not in st.session_state:
-    st.session_state["uploaded_files"] = []
 if "refresh_index" not in st.session_state:
     st.session_state["refresh_index"] = True
 
-# Hash function for password validation
+# Auth
 def hash_password(password):
     return sha256(password.encode()).hexdigest()
 
-# Hardcoded user authentication
 users = {"admin": {"name": "Admin", "password": hash_password(admin_password)}}
 
 def authenticate(username, password):
-    if username in users and users[username]["password"] == hash_password(password):
-        return True, users[username]["name"]
-    return False, None
+    return (username in users and users[username]["password"] == hash_password(password)), users.get(username, {}).get("name")
 
-# Initialize SentenceTransformer Model
+# Embedding model
 model = SentenceTransformer('bert-base-nli-mean-tokens')
 
-# Database Setup
+# Topic-based FAISS indexes
+topic_indexes = {
+    "AI": {"index": None, "ids": [], "table": "ai_articles"},
+    "Healthcare": {"index": None, "ids": [], "table": "healthcare_articles"},
+    "Environment": {"index": None, "ids": [], "table": "environment_articles"},
+}
+
+# DB connection
 def init_database():
-    try:
-        conn = sqlite3.connect('research_repository.db')
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS research_data (
-            id INTEGER PRIMARY KEY,
-            title TEXT,
-            content TEXT,
-            tags TEXT,
-            embedding BLOB
-        )''')
-        conn.commit()
-        return conn, cursor
-    except sqlite3.Error as e:
-        st.error(f"Database initialization error: {e}")
-        raise
+    conn = sqlite3.connect('repository.db')
+    cursor = conn.cursor()
+    return conn, cursor
 
 conn, cursor = init_database()
 
-def add_to_database(title, content, tags):
-    try:
-        embedding = model.encode(content)
-        cursor.execute('INSERT INTO research_data (title, content, tags, embedding) VALUES (?, ?, ?, ?)',
-                       (title, content, tags, embedding.tobytes()))
-        conn.commit()
-        st.session_state['refresh_index'] = True  # Mark FAISS index for rebuild
-    except sqlite3.Error as e:
-        st.error(f"Failed to add data to database: {e}")
+# Build FAISS
+def build_faiss_for_topic(topic):
+    table = topic_indexes[topic]["table"]
+    cursor.execute(f'SELECT id, embedding FROM {table}')
+    data = cursor.fetchall()
+    if not data:
+        return None, []
+    ids, embeddings = zip(*[(row[0], np.frombuffer(row[1], dtype=np.float32)) for row in data])
+    dim = len(embeddings[0])
+    index = faiss.IndexFlatL2(dim)
+    index.add(np.vstack(embeddings))
+    return index, list(ids)
 
-# Extract Text from PDF
-def extract_text_from_pdf(file):
-    try:
-        reader = PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-        return text
-    except Exception as e:
-        st.error(f"Failed to extract text from PDF: {e}")
-        return None
+# Refresh all topic indexes
+def refresh_all_indexes():
+    for topic in topic_indexes:
+        index, ids = build_faiss_for_topic(topic)
+        topic_indexes[topic]["index"] = index
+        topic_indexes[topic]["ids"] = ids
 
-# Extract Text from Word Documents
-def extract_text_from_word(file):
-    try:
-        doc = Document(file)
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
-    except Exception as e:
-        st.error(f"Failed to extract text from Word file: {e}")
-        return None
+if st.session_state["refresh_index"]:
+    refresh_all_indexes()
+    st.session_state["refresh_index"] = False
 
-# Build FAISS Index
-def build_faiss_index():
-    try:
-        cursor.execute('SELECT id, embedding FROM research_data')
-        data = cursor.fetchall()
-
-        if not data:  # Handle empty database
-            st.warning("The database table `research_data` is empty. Please add some entries.")
-            return None, None
-
-        ids, embeddings = zip(*[(row[0], np.frombuffer(row[1], dtype=np.float32)) for row in data])
-        dimension = len(embeddings[0])
-        index = faiss.IndexFlatL2(dimension)
-        index.add(np.vstack(embeddings))
-        return index, ids
-    except Exception as e:
-        st.error(f"Failed to build FAISS index: {e}")
-        raise
-
-# Refresh FAISS Index When Needed
-def refresh_faiss_index():
-    if st.session_state['refresh_index']:
-        global index, ids
-        index, ids = build_faiss_index()
-        st.session_state['refresh_index'] = False  # Reset the flag
-
-refresh_faiss_index()
-
-# Search for Content
-def search(query, k=1):
+# Search
+def search_topic(topic, query, k=3):
+    index = topic_indexes[topic]["index"]
+    ids = topic_indexes[topic]["ids"]
     if index is None:
-        st.warning("FAISS index is not built. Please add some data to the database first.")
+        st.warning(f"No data available in {topic}.")
         return []
-    query_embedding = model.encode(query)
-    distances, indices = index.search(np.array([query_embedding]), k)
-    results = [ids[i] for i in indices[0]]
-    return results
+    query_vec = model.encode(query)
+    distances, indices = index.search(np.array([query_vec]), k)
+    return [ids[i] for i in indices[0]]
 
-# Authentication and Logout
-st.sidebar.header("Login")
-if not st.session_state["authenticated"]:
+# Report Generation
+def generate_report(topic, query, style):
+    results = search_topic(topic, query)
+    if not results:
+        return None
+    table = topic_indexes[topic]["table"]
+    report = f"# Report on {topic} — Style: {style}\n\n"
+    for res_id in results:
+        cursor.execute(f"SELECT title, content FROM {table} WHERE id=?", (res_id,))
+        title, content = cursor.fetchone()
+        report += f"## {title}\n\n{content[:1500]}...\n\n"
+    return report
+
+# Download as Word
+def download_as_word(text, filename="report.docx"):
+    doc = DocxWriter()
+    doc.add_heading('Generated Research Report', 0)
+    for line in text.split('\n'):
+        doc.add_paragraph(line)
+    doc.save(filename)
+    with open(filename, "rb") as f:
+        st.download_button("Download Word", f, file_name=filename)
+
+# Download as PDF
+def download_as_pdf(text, filename="report.pdf"):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    for line in text.split('\n'):
+        pdf.multi_cell(0, 10, line)
+    pdf.output(filename)
+    with open(filename, "rb") as f:
+        st.download_button("Download PDF", f, file_name=filename)
+
+# === UI with Better Style and Persistent Login ===
+
+st.markdown("""
+    <style>
+    .main {background-color: #f8f9fa;}
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    .stTextInput>div>div>input {
+        background-color: #ffffff;
+    }
+    .stButton button {
+        background-color: #4CAF50;
+        color: white;
+        font-weight: bold;
+        border-radius: 5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Sidebar: Login
+st.sidebar.title("🔐 Login Panel")
+
+if not st.session_state.get("authenticated", False):
     username = st.sidebar.text_input("Username")
     password = st.sidebar.text_input("Password", type="password")
     if st.sidebar.button("Login"):
-        authenticated, name = authenticate(username, password)
-        if authenticated:
-            st.sidebar.success(f"Welcome, {name}!")
+        valid, name = authenticate(username, password)
+        if valid:
             st.session_state["authenticated"] = True
+            st.session_state["user_name"] = name
+            st.rerun()
         else:
-            st.sidebar.error("Authentication failed. Please check your credentials.")
+            st.sidebar.error("Invalid credentials.")
 else:
-    st.sidebar.header("Actions")
+    st.sidebar.success(f"✅ Logged in as {st.session_state['user_name']}")
     if st.sidebar.button("Logout"):
-        st.session_state["authenticated"] = False
-        st.sidebar.success("Logged out successfully!")
-        st.stop()
+        st.session_state.clear()
+        st.rerun()
 
-# File Upload and Persistent Storage
-if st.session_state["authenticated"]:
-    st.title("Upload Research Data")
-    uploaded_file = st.file_uploader("Upload a PDF or Word document", type=["pdf", "docx"])
-    if uploaded_file:
-        if uploaded_file.name.endswith(".pdf"):
-            text_content = extract_text_from_pdf(uploaded_file)
-        elif uploaded_file.name.endswith(".docx"):
-            text_content = extract_text_from_word(uploaded_file)
-        else:
-            st.error("Unsupported file format. Please upload a PDF or Word document.")
+# ✅ Main content only after login
+if st.session_state.get("authenticated", False):
+    st.title("📑 Intelligent Research Report Generator")
+    st.markdown("Use your query to generate a topic-based report from preloaded research documents.")
 
-        if text_content:
-            title = st.text_input("Enter a title for this document:")
-            tags = st.text_input("Enter tags (comma-separated):")
+    st.subheader("🧠 Query Input")
 
-            if st.button("Add to Database"):
-                if title and tags:
-                    add_to_database(title, text_content, tags)
-                    st.session_state["uploaded_files"].append({"title": title, "tags": tags})
-                    st.success("Document added successfully!")
-                else:
-                    st.error("Please provide both a title and tags.")
+    topic = st.selectbox("Select Research Topic", list(topic_indexes.keys()))
+    query = st.text_input("What would you like to know?")
+    style = st.selectbox("Select Report Style", ["Formal", "Summary", "Bullet Points"])
 
-    # Display Uploaded Files in Sidebar
-    if st.session_state["uploaded_files"]:
-        st.sidebar.header("Uploaded Documents")
-        for file in st.session_state["uploaded_files"]:
-            st.sidebar.write(f"- {file['title']}")
-
-# Search Functionality
-if st.session_state["authenticated"]:
-    st.title("Search Research Data")
-    query = st.text_input("Enter your search query:")
-    if st.button("Submit"):
+    if st.button("Generate Report"):
         if query:
-            refresh_faiss_index()  # Ensure FAISS index is up-to-date
-            results = search(query)
-            if results:
-                st.subheader("Search Results")
-                unique_results = set()  # Track unique result IDs
-                for result_id in results:
-                    if result_id not in unique_results:  # Check for duplicates
-                        unique_results.add(result_id)
-                        cursor.execute('SELECT title, content FROM research_data WHERE id=?', (result_id,))
-                        title, content = cursor.fetchone()
-                    st.write(f"**Title:** {title}")
-                    st.write(f"**Content:** {content[:3000]}...")  # Show snippet of content
+            report_text = generate_report(topic, query, style)
+            if report_text:
+                st.success("✅ Report generated successfully!")
+                st.markdown("### 📄 Preview of Report")
+                st.code(report_text, language="markdown")
+                download_as_word(report_text)
+                download_as_pdf(report_text)
             else:
-                st.warning("No results found for your query.")
+                st.warning("⚠️ No results found for this query.")
+        else:
+            st.error("❗ Please enter a query before generating a report.")
+
+
