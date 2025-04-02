@@ -16,7 +16,7 @@ openai.api_key = GROQ_API_KEY
 openai.api_base = GROQ_API_BASE
 
 # Fallback sentence transformer
-local_model = SentenceTransformer("all-MiniLM-L6-v2")
+local_model = SentenceTransformer("bert-base-nli-mean-tokens")
 
 # Language Model Integration
 def synthesize_content(query):
