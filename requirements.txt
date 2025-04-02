@@ -32,6 +32,8 @@ executing==2.2.0
 extra-streamlit-components==0.1.71
 faiss-cpu==1.10.0
 fastjsonschema==2.21.1
+reportlab
+groq
 filelock==3.18.0
 fonttools==4.56.0
 fpdf==1.7.2
