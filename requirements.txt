@@ -1,0 +1,16 @@
+streamlit
+sentence-transformers
+faiss-cpu
+fpdf
+numpy
+googletrans==4.0.0-rc1
+matplotlib
+pandas
+streamlit-authenticator
+python-dotenv
+requests
+sentence_transformers
+googletrans
+streamlit_authenticator
+PyPDF2
+docx
