@@ -1,0 +1,3 @@
+LLM Response Rating Dataset
+
+Human-rated outputs from various prompts and models, useful for reinforcement learning.

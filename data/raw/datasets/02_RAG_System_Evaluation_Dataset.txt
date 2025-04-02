@@ -1,0 +1,3 @@
+RAG System Evaluation Dataset
+
+This dataset provides sample queries, relevant documents, and reference summaries for evaluating retrieval-augmented generation pipelines.

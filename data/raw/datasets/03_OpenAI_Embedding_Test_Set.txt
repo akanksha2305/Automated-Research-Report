@@ -1,0 +1,3 @@
+OpenAI Embedding Test Set
+
+Includes text chunks and corresponding embeddings generated via OpenAI API for reproducibility tests.
