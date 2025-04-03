@@ -1,3 +1,0 @@
-Vector Search Benchmark
-
-Comparison dataset used to evaluate vector DBs (FAISS, Pinecone, Chroma) on precision and speed.

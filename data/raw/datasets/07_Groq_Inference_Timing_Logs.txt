@@ -1,3 +1,0 @@
-Groq Inference Timing Logs
-
-Timing benchmarks for LLaMA-2 and Mixtral models running on Groq for research inference loads.

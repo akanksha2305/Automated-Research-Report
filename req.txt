@@ -12,5 +12,6 @@ streamlit
  sentence_transformers
  googletrans
  streamlit_authenticator
+ openai
  PyPDF2
- docx
+ python-docx

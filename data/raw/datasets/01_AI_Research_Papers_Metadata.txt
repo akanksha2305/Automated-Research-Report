@@ -1,3 +1,0 @@
-AI Research Papers Metadata
-
-Contains titles, authors, abstracts of 100k+ papers used in building citation graphs and recommender systems.

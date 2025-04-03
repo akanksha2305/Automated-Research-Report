@@ -1,3 +1,0 @@
-Scientific Abstracts for QA
-
-A set of abstracts used to train and test question-answering over scientific text.

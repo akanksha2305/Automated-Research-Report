@@ -1,5 +1,4 @@
-# ✅ UPDATED backend.py with Semantic Chunking + Fusion Retrieval + Corrective RAG
-
+# ✅ UPDATED backend.py using local embeddings + Groq for LLMs only
 import os
 import faiss
 import pickle
@@ -8,32 +7,28 @@ from PyPDF2 import PdfReader
 from docx import Document
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-import openai
 import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import nltk
-nltk.download('punkt')
 from nltk.tokenize import sent_tokenize
+import pdfplumber
+
+# Download sentence tokenizer
+nltk.download('punkt_tab', quiet=True)
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_API_BASE = os.getenv("GROQ_API_BASE")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_MODEL = "bert-base-nli-mean-tokens"  # Groq doesn't support embeddings, so use local
 
-# OpenAI API setup
-from openai import OpenAI
-client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_API_BASE)
+# Load local embedding model
+local_model = SentenceTransformer(EMBEDDING_MODEL)
 
-# Local embedding model fallback
-local_model = SentenceTransformer("bert-base-nli-mean-tokens")
-
-# ---- Helper: Strip non-ASCII characters ----
+# Strip non-ASCII characters
 def strip_non_ascii(text):
     return ''.join(char for char in text if ord(char) < 128)
 
-# ---- 1. Extract & Chunk Text Semantically ----
+# Semantic chunking
 def semantic_chunk(text, max_tokens=100):
     text = strip_non_ascii(text)
     sentences = sent_tokenize(text)
@@ -51,19 +46,37 @@ def semantic_chunk(text, max_tokens=100):
         chunks.append(" ".join(chunk))
     return chunks
 
+# Text extraction
 def extract_text(file_path):
     content = ""
-    if file_path.endswith(".pdf"):
-        reader = PdfReader(file_path)
-        content = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
-    elif file_path.endswith(".docx"):
-        doc = Document(file_path)
-        content = "\n".join([p.text for p in doc.paragraphs])
-    elif file_path.endswith(".txt"):
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    return semantic_chunk(content)  # return cleaned chunks
 
+    if file_path.endswith(".pdf"):
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                content = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+        except Exception as e:
+            print(f"❌ Failed to read PDF: {file_path} – {e}")
+            content = ""
+    
+    elif file_path.endswith(".docx"):
+        try:
+            doc = Document(file_path)
+            content = "\n".join([p.text for p in doc.paragraphs])
+        except Exception as e:
+            print(f"❌ Failed to read DOCX: {file_path} – {e}")
+            content = ""
+
+    elif file_path.endswith(".txt"):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"❌ Failed to read TXT: {file_path} – {e}")
+            content = ""
+
+    return semantic_chunk(content)
+
+# Load and chunk all documents
 def load_documents():
     base_dir = "data/raw"
     all_chunks = []
@@ -80,20 +93,12 @@ def load_documents():
                 })
     return all_chunks
 
-# ---- 2. Embedding via API or fallback ----
+# Embedding with local model (only)
 def get_embedding(text):
     text = strip_non_ascii(text)
-    try:
-        response = client.embeddings.create(
-            input=[text],
-            model=EMBEDDING_MODEL
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        print("Groq API failed, falling back to local model:", e)
-        return local_model.encode([text])[0].tolist()
+    return local_model.encode([text])[0].tolist()
 
-# ---- 3. Build FAISS index ----
+# Build FAISS index
 def build_index():
     docs = load_documents()
     vectors = []
@@ -108,11 +113,12 @@ def build_index():
     index = faiss.IndexFlatL2(vector_array.shape[1])
     index.add(vector_array)
 
+    os.makedirs("data/embeddings", exist_ok=True)
     faiss.write_index(index, "data/embeddings/faiss_index.index")
     with open("data/embeddings/metadata.pkl", "wb") as f:
         pickle.dump(metadata, f)
 
-# ---- 4. Fusion Retrieval (Vector + Keyword) ----
+# Fusion Retrieval
 def search(query, top_k=5):
     index = faiss.read_index("data/embeddings/faiss_index.index")
     with open("data/embeddings/metadata.pkl", "rb") as f:
@@ -123,25 +129,24 @@ def search(query, top_k=5):
     scores, idxs = index.search(query_vec, top_k)
     vector_hits = [metadata[i] for i in idxs[0]]
 
-    # Keyword-based TF-IDF search
     docs_text = [strip_non_ascii(m['text']) for m in metadata]
-    tfidf = TfidfVectorizer().fit_transform(docs_text)
-    tfidf_query = TfidfVectorizer().fit(docs_text).transform([query])
+    tfidf_vectorizer = TfidfVectorizer()
+    tfidf = tfidf_vectorizer.fit_transform(docs_text)
+    tfidf_query = tfidf_vectorizer.transform([query])
     tfidf_scores = cosine_similarity(tfidf_query, tfidf).flatten()
     keyword_hits = [metadata[i] for i in tfidf_scores.argsort()[-top_k:][::-1]]
 
-    # Merge & deduplicate
     combined = {entry['text']: entry for entry in vector_hits + keyword_hits}
     return list(combined.values())[:top_k]
 
-# ---- 5. Corrective RAG Helper ----
+# Optional: Validate LLM answers
 def validate_answer_with_sources(answer, sources):
     answer = strip_non_ascii(answer)
-    answer_keywords = set(re.findall(r"\\b\\w+\\b", answer.lower()))
+    answer_keywords = set(re.findall(r"\b\w+\b", answer.lower()))
     support_score = 0
     for source in sources:
         source_text = strip_non_ascii(source['text'])
-        source_keywords = set(re.findall(r"\\b\\w+\\b", source_text.lower()))
+        source_keywords = set(re.findall(r"\b\w+\b", source_text.lower()))
         match = len(answer_keywords & source_keywords) / len(answer_keywords | source_keywords)
         support_score += match
 
