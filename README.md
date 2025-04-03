@@ -6,6 +6,8 @@ This project is an **AI-powered application** that automates the process of gene
 - A clean **Streamlit UI** for end-to-end interaction
 
 ---
+## Deployed link
+https://huggingface.co/spaces/akankshax/automated-report-generation
 
 ## 🧠 Problem Statement
 
