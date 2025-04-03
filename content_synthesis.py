@@ -1,55 +1,67 @@
 import openai
-import groq
-from sentence_transformers import SentenceTransformer
+import os
+import re
+from dotenv import load_dotenv
 
 # Load environment variables
-from dotenv import load_dotenv
-import os
-
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_API_BASE = os.getenv("GROQ_API_BASE")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+openai.api_key = os.getenv("GROQ_API_KEY")
+openai.api_base = os.getenv("GROQ_API_BASE")
 
-# Use Groq API (OpenAI-compatible)
-openai.api_key = GROQ_API_KEY
-openai.api_base = GROQ_API_BASE
+# Use Groq-supported model
+LLM_MODEL = "llama3-8b-8192"
 
-# Fallback sentence transformer
-local_model = SentenceTransformer("bert-base-nli-mean-tokens")
-
-# Language Model Integration
+# ✅ 1. Generate structured content using Groq (OpenAI-compatible)
 def synthesize_content(query):
     try:
-        response = openai.Completion.create(
-            engine="text-davinci-003",
-            prompt=f"Generate a research report based on the following query: {query}",
-            max_tokens=1500
+        response = openai.ChatCompletion.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are an expert research assistant."},
+                {"role": "user", "content": f"Generate a detailed research report for the topic: {query}. Include the following sections: Abstract, Literature Review, Methodology, Findings, Conclusion."}
+            ],
+            max_tokens=2048,
+            temperature=0.7
         )
-        return response.choices[0].text
+        return response.choices[0].message['content'].strip()
     except Exception as e:
-        print("Groq API failed, falling back to local model:", e)
-        return local_model.encode([query])[0].tolist()
+        print("Groq API failed:", e)
+        return ""
 
-# Synthesis Pipeline Design
+# ✅ 2. Parse content into structured sections (flexible parsing with fallback)
 def structure_report(content):
-    sections = {
-        "Abstract": content[:300],
-        "Literature Review": content[300:600],
-        "Methodology": content[600:900],
-        "Findings": content[900:1200],
-        "Conclusion": content[1200:]
-    }
-    return sections
+    if not content:
+        return {section: "[No content generated]" for section in ["Abstract", "Literature Review", "Methodology", "Findings", "Conclusion"]}
 
-# Testing and Refinement
-def test_synthesis(query):
-    content = synthesize_content(query)
-    report = structure_report(content)
+    sections = ["Abstract", "Literature Review", "Methodology", "Findings", "Conclusion"]
+    report = {}
+    pattern = "|".join([fr"\b{section}\b" for section in sections])
+    matches = list(re.finditer(pattern, content, re.IGNORECASE))
+
+    for i in range(len(matches)):
+        start = matches[i].start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        section_title = matches[i].group(0).strip().title()
+        section_content = content[start + len(section_title):end].strip()
+        report[section_title] = section_content
+
+    # Ensure all expected sections are in report
+    for sec in sections:
+        if sec not in report:
+            report[sec] = "[Section not found in response]"
+
     return report
 
-# Example usage
+# ✅ 3. Combined tester
+def test_synthesis(query):
+    content = synthesize_content(query)
+    return structure_report(content)
+
+# ✅ 4. Run it and print output
 if __name__ == "__main__":
-    query = "AI research"
+    query = "The role of LLMs in automated research report generation"
     report = test_synthesis(query)
-    print(report)
+
+    print("\n📝 Structured Research Report:\n")
+    for section, text in report.items():
+        print(f"## {section}\n{text}\n")
