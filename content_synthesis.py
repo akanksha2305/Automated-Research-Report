@@ -41,7 +41,7 @@ Ensure it is factual, concise, and derived from the context above.
         print(f"Groq API failed for {section}:", e)
         return "[Error generating section]"
 
-# 📚 RAG pipeline — uses FAISS retrieval
+#RAG pipeline — uses FAISS retrieval
 def test_synthesis(query, top_k=5):
     retrieved_docs = search(query, top_k=top_k)
     combined_context = "\n\n".join([doc['text'] for doc in retrieved_docs])
@@ -52,7 +52,7 @@ def test_synthesis(query, top_k=5):
         for section in sections
     }
 
-# 📝 Test the full report
+#Test the full report
 if __name__ == "__main__":
     query = "The role of LLMs in automated research report generation"
     report = test_synthesis(query)

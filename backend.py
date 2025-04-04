@@ -1,4 +1,3 @@
-# ✅ UPDATED backend.py using local embeddings + Groq for LLMs only
 import os
 import faiss
 import pickle
