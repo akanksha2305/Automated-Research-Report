@@ -41,7 +41,8 @@ This project solves that by automating the process through:
 | UI               | Streamlit                            |
 | File Handling    | PyPDF2, python-docx                  |
 | Environment      | Python 3.10+                          |
-| Deployment (opt) | Hugging Face, Docker, Azure          |
+| Deployment       | Hugging Face                          |
+| Tracing          | LangSmith                             |
 
 ---
 
