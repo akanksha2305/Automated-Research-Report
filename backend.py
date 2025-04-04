@@ -118,6 +118,7 @@ def build_index():
         pickle.dump(metadata, f)
 
 # Fusion Retrieval
+@traceable(name="RAG Search")
 def search(query, top_k=5):
     index = faiss.read_index("data/embeddings/faiss_index.index")
     with open("data/embeddings/metadata.pkl", "rb") as f:

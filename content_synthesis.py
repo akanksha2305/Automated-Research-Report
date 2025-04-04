@@ -2,7 +2,13 @@ import openai
 import os
 import re
 from dotenv import load_dotenv
-from backend import search  # ✅ Uses your FAISS+TFIDF fusion retrieval
+from backend import search  
+from langsmith import traceable
+from langchain_core.tracers.langchain import install_tracing
+
+# Enable LangSmith tracing globally
+install_tracing()
+
 
 # Load API keys
 load_dotenv()
@@ -11,7 +17,8 @@ openai.api_base = os.getenv("GROQ_API_BASE")
 
 LLM_MODEL = "llama3-8b-8192"
 
-# 🔍 RAG-enabled prompt
+# RAG-enabled prompt
+@traceable(name="Groq LLM - Synthesize Section")
 def synthesize_section(query, section, context):
     prompt = f"""
 You are an expert research assistant.
