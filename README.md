@@ -64,6 +64,9 @@ pip install -r requirements.txt
 GROQ_API_KEY=your_groq_key
 GROQ_API_BASE=https://api.groq.com/openai/v1
 EMBEDDING_MODEL=text-embedding-3-small
+LANGCHAIN_TRACING_V2="true"
+LANGCHAIN_PROJECT="ResearchReportTracing"
+LANGSMITH_API_KEY=your_lansmith_key
 ```
 
 ### 4. Run the embedding pipeline
